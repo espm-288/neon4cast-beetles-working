@@ -1,0 +1,203 @@
+---
+title: "Weiwei Predict"
+author: "weiwei"
+date:   "2021/3/1"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*. 
+
+```{r}
+# setup
+library(tidyverse)
+library(neonstore)
+library(tsibble)
+library(imputeTS)
+library(dplyr)
+
+Sys.setenv("NEONSTORE_HOME" = "/efi_neon_challenge/neonstore")
+Sys.setenv("NEONSTORE_DB" = "/efi_neon_challenge/neonstore")
+# beetles: DP1.10022.001  weather: DP4.00001.001  plant cover: DP1.10058.001
+# neonstore::neon_download(product="DP1.10058.001")
+# neonstore::neon_store(product="DP1.10058.001")
+beetles <- neon_read(table = "bet_fielddata-basic", product = "DP1.10022.001")
+temperature <- neon_read(table = "wss_daily_temp-basic", product = "DP4.00001.001")
+precipation <- neon_read(table = "wss_daily_precip-basic", product = "DP4.00001.001")
+humidity <- neon_read(table = "wss_daily_humid-basic", product = "DP4.00001.001")
+plantcover <- neon_read(table = "div_1m2Data-basic", product = "DP1.10058.001")
+download.file("https://data.ecoforecast.org/targets/beetles/beetles-targets.csv.gz",
+              "beetles-targets.csv.gz")
+target <-  read_csv("beetles-targets.csv.gz") %>% as_tibble()
+field_info <- read.csv('./NEON_Field_Site_Metadata_20210226_0.csv')
+beetles
+temperature
+precipation
+humidity
+plantcover
+target
+field_info
+```
+
+```{r}
+humidity_new <- humidity %>% 
+                filter(dewTempQF == 0, !is.na(wssRHMean)) %>%
+                mutate(date = as.Date(date)) %>%
+                group_by(siteID, date) %>%
+                summarise(humidity_mean = mean(wssRHMean, na.rm = TRUE),
+                          humidity_min = min(wssRHMinimum, na.rm = TRUE),
+                          humidity_max = max(wssRHMaximum, na.rm = TRUE)) %>%
+                select(siteID, date, humidity_mean, humidity_min, humidity_max)
+humidity_new
+t = humidity_new %>% 
+      filter(siteID=="BONA") %>% 
+      # filter(siteID=="BONA"), date<as.Date("2018-1-1")) %>% 
+      arrange(date)
+ggplot(data=NULL, aes(x=t$date, y=t$humidity_mean)) + geom_line(colour="lightblue", size=1) + geom_point(colour="lightblue", size=2)
+rm("t")
+
+```
+```{r}
+humidity_new <- humidity %>% 
+                filter(dewTempQF == 0, !is.na(wssRHMean)) %>%
+                mutate(date = as.Date(date)) %>%
+                group_by(siteID, date) %>%
+                #summarise(humidity_mean = mean(wssRHMean, na.rm = TRUE),
+                #          humidity_min = min(wssRHMinimum, na.rm = TRUE),
+                #          humidity_max = max(wssRHMaximum, na.rm = TRUE)) %>%
+                #select(siteID, date, humidity_mean, humidity_min, humidity_max)
+                summarise(humidity_mean = mean(wssRHMean, na.rm = TRUE)) %>%
+                select(siteID, date, humidity_mean)
+humidity_new
+t = humidity_new %>% 
+      filter(siteID=="BONA") %>% 
+      # filter(siteID=="BONA"), date<as.Date("2018-1-1")) %>% 
+      arrange(date)
+ggplot(data=NULL, aes(x=t$date, y=t$humidity_mean)) + geom_line(colour="lightblue", size=1) + geom_point(colour="lightblue", size=2)
+rm("t")
+```
+
+```{r}
+precipation_new <- precipation %>% 
+                  filter(precipQF == 0) %>%
+                  mutate(date = as.Date(date)) %>%
+                  select(siteID, date, precip_total = wssPrecipTotal)
+precipation_new
+```
+```{r}
+temperature_new <- temperature %>% 
+                filter(tempTripleQF == 0, !is.na(wssTempTripleMean)) %>%
+                mutate(date = as.Date(date)) %>%
+                group_by(siteID, date) %>%
+                summarise(temperature_mean = mean(wssTempTripleMean, na.rm = TRUE))%>%
+                #summarise(temperature_mean = mean(wssTempTripleMean, na.rm = TRUE),
+                          #temperature_min = min(wssTempTripleMinimum, na.rm = TRUE),
+                          #temperature_max = max(wssTempTripleMaximum, na.rm = TRUE)) %>%
+                #select(siteID, date, temperature_mean, temperature_min, temperature_max) %>%
+                select(siteID, date, temperature_mean) %>%
+                as_tsibble(key = siteID, index = date) %>%
+                group_by_key() %>%
+                fill_gaps()
+temperature_new
+temperature_new <- temperature_new
+temperature_new$temperature_mean <- na_interpolation(temperature_new$temperature_mean)
+
+
+
+if(FALSE){
+temperature_new_new <- NaN
+for(siteID_ in levels(factor(temperature_new$siteID))){
+  temp_temperature <- temperature_new %>% filter(siteID == siteID_)
+  temp_temperature$temperature_mean <- na_interpolation(temp_temperature$temperature_mean)
+  
+  #mark <- c(1:length(temp_temperature$date), 0)
+  #for(x in 1:length(temp_temperature$date)){
+  #  if(is.na(temperature_new$date[x]) && is.na(temperature_new$date[x])){
+  #    
+  #  }
+  #}
+  if(is.na(temperature_new_new)){
+    temperature_new_new = temp_temperature
+  }else{
+    temperature_new_new <- dplyr::bind_rows(temperature_new_new, temp_temperature)
+  }
+}
+}
+
+ttt = temperature_new %>% 
+      filter(siteID=="OSBS") %>% 
+      # filter(siteID=="BONA"), date<as.Date("2018-1-1")) %>% 
+      arrange(date)
+ggplot(data=NULL, aes(x=ttt$date, y=ttt$temperature_mean)) + geom_line(colour="lightblue", size=1) + geom_point(colour="lightblue", size=2)
+rm("ttt")
+
+
+
+
+```
+
+```{r}
+target_new <- target %>% 
+                mutate(richness = ifelse(is.na(richness), 0, richness),
+                       date=as.Date(time)) %>%
+                select(siteID, date, abundance, richness)
+target_new
+```
+```{r}
+field_info_new <- field_info %>% select(field_domain_id, field_site_id)
+site_domain <- field_info_new$field_domain_id
+names(site_domain) <- field_info_new$field_site_id
+domain_site <- levels(factor(humidity_new$siteID))
+names(domain_site) <- site_domain[levels(factor(humidity_new$siteID))]
+print(domain_site[site_domain[levels(factor(target_new$siteID))]])
+
+target_merge <-  left_join(target_new, temperature_new, by=c("siteID", "date"))
+
+for(x in 1:length(target_merge$siteID)){
+  siteID_ <- target_merge$siteID[x]
+  date_ <- target_merge$date[x]
+  temperature_mean_ <- target_merge$temperature_mean[x]
+  if(is.na(temperature_mean_))
+    tt <- (temperature_new %>%
+                        filter(siteID == domain_site[site_domain[siteID_]], 
+                        date == date_))
+    if(length(tt))target_merge$temperature_mean[x] <- as.numeric(tt[1,"temperature_mean"])
+}
+target_merge
+
+
+
+target_merge <-  left_join(target_merge, humidity_new, by=c("siteID", "date"))
+
+for(x in 1:length(target_merge$siteID)){
+  siteID_ <- target_merge$siteID[x]
+  date_ <- target_merge$date[x]
+  humidity_mean_ <- target_merge$humidity_mean[x]
+  if(is.na(humidity_mean_))
+    tt <- (humidity_new %>%
+                        filter(siteID == domain_site[site_domain[siteID_]], 
+                        date == date_))
+    if(length(tt))target_merge$humidity_mean[x] <- as.numeric(tt[1,"humidity_mean"])
+}
+target_merge
+
+target_merge <-  left_join(target_merge, precipation_new, by=c("siteID", "date"))
+
+for(x in 1:length(target_merge$siteID)){
+  siteID_ <- target_merge$siteID[x]
+  date_ <- target_merge$date[x]
+  precip_total_ <- target_merge$precip_total[x]
+  if(is.na(precip_total_))
+    tt <- (precipation_new %>%
+                        filter(siteID == domain_site[site_domain[siteID_]], 
+                        date == date_))
+    if(length(tt))target_merge$precip_total[x] <- as.numeric(tt[1,"precip_total"])
+}
+target_merge
+```
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Ctrl+Alt+I*.
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Ctrl+Shift+K* to preview the HTML file).
+
+The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
