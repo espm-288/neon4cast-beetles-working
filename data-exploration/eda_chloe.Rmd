@@ -16,6 +16,9 @@ library(forecast)
 ```
 
 ```{r}
+df <- neon_index()
+df %>% filter(product =="DP1.10022.001") %>% count(table)
+
 beetles <- neon_read(table = "bet_expertTaxonomistIDProcessed-basic", product = "DP1.10022.001")
 head(beetles)
 ```

@@ -1,0 +1,123 @@
+---
+title: "introductory forecasting"
+author: "Chloe Cho"
+date: "2/17/2021"
+output: github_document
+---
+
+```{r message=FALSE}
+library(tidyverse)
+library(ISOweek) 
+library(forecast)
+library(fable)
+library(tsibble)
+library(tsibbledata)
+library(lubridate)
+library(dplyr)
+library(neonstore)
+library(tibbletime)
+library(neon4cast)
+```
+
+```{r message=FALSE}
+## Get the latest beetle target data.  
+download.file("https://data.ecoforecast.org/targets/beetles/beetles-targets.csv.gz",
+              "beetles-targets.csv.gz")
+targets <-  read_csv("beetles-targets.csv.gz")
+```
+
+```{r}
+# Get beetles data
+beetles <- neon_read(table = "bet_expertTaxonomistIDProcessed-basic", product = "DP1.10022.001")
+head(beetles)
+```
+
+```{r}
+# Get precipitation data
+precip <- neon_read(table = "wss_daily_precip-basic", product = "DP4.00001.001")
+head(precip)
+```
+
+## Including a Predictor (Precipitation)
+
+```{r}
+precip_summary <- precip %>%
+  mutate(iso_week = ISOweek::date2ISOweek(date)) %>%
+  mutate(time = as.Date(date)) %>%
+  mutate(time = yearweek(date)) %>%
+  group_by(siteID, time) %>%
+  summarise(avg_precip = mean(wssPrecipTotal, na.rm = TRUE), min_precip = min(wssPrecipTotal, na.rm = TRUE), max_precip = max(wssPrecipTotal, na.rm = TRUE))
+```
+
+Joined beetles and precipitation data. 
+```{r}
+targets_tsb <- as_tsibble(targets, key = siteID, index = time)
+
+targets_tsb <- targets_tsb %>%
+  group_by_key() %>%
+  fill_gaps() %>%
+  tidyr::fill(abundance, .direction = "down") %>%
+  tidyr::fill(richness, .direction = "down") %>%
+  filter(time < max(time) - 30)
+
+beetle_precip <- left_join(targets_tsb, precip_summary, by = c("time", "siteID"))
+```
+
+```{r}
+targets_ts <- beetle_precip %>%
+  select(siteID, time, abundance, richness, avg_precip, min_precip, max_precip) %>%
+  mutate(iso_week = ISOweek::date2ISOweek(time)) %>%
+  separate(iso_week, into = c("year", "week", "day"))  %>%
+  mutate(time = ISOweek::ISOweek2date(paste(year,week, "1", sep = "-")))
+
+targets_tsb <- as_tsibble(targets_ts, key = siteID, index = time)
+```
+
+```{r}
+fit_abundance <- targets_tsb %>%
+  model(
+    TSLM(abundance ~ avg_precip)
+  ) 
+fit_abundance
+
+fit_richness <- targets_tsb %>%
+  model(
+    TSLM(richness ~ avg_precip)
+  ) 
+fit_richness
+```
+
+Create some forecasts! 
+```{r}
+predictors <- targets_tsb %>%
+  filter(time > max(time) - 30)
+
+fc_abundance <- forecast(fit_abundance, predictors) %>%
+  efi_format()
+
+fc_richness <- forecast(fit_richness, predictors) %>%
+  efi_format()
+
+forecast <- inner_join(fc_richness, fc_abundance)
+scores <- neon4cast::score(forecast, "beetles")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
