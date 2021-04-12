@@ -1,5 +1,5 @@
 ---
-title: "introductory forecasting"
+title: "cleaned-forecast"
 author: "Chloe Cho"
 date: "2/17/2021"
 output: github_document
@@ -87,31 +87,98 @@ fit_richness <- targets_tsb %>%
 fit_richness
 ```
 
-Create some forecasts! 
 ```{r}
-predictors <- targets_tsb %>%
-  filter(time > max(time) - 30)
+null_fit_abundance <- targets_tsb %>%
+  model(NAIVE(abundance)) 
+null_fit_abundance
 
-fc_abundance <- forecast(fit_abundance, predictors) %>%
-  efi_format()
-
-fc_richness <- forecast(fit_richness, predictors) %>%
-  efi_format()
-
-forecast <- inner_join(fc_richness, fc_abundance)
-scores <- neon4cast::score(forecast, "beetles")
+null_fit_richness <- targets_tsb %>%
+  model(NAIVE(richness)) 
+null_fit_richness
 ```
 
 
+```{r}
+efi_statistic_format <- function(df){
+  ## determine variable name
+  var <- attributes(df)$dist
+  ## Normal distribution: use distribution mean and variance
+  df %>% 
+    dplyr::mutate(sd = sqrt( distributional::variance( .data[[var]] ) ) ) %>%
+    dplyr::rename(mean = .mean) %>%
+    dplyr::select(time, siteID, .model, mean, sd) %>%
+    tidyr::pivot_longer(c(mean, sd), names_to = "statistic", values_to = var)
+}
+```
+
+```{r}
+predictors <- targets_tsb %>%
+  filter(time > max(time) - 30)
+```
+
+
+Create some forecasts! 
+
+Null forecast (to use to compare scores).
+```{r}
+null_fc_abundance_score <- forecast(null_fit_abundance, predictors) %>%
+  efi_format()
+  
+null_fc_richness_score <- forecast(null_fit_richness, predictors) %>%
+  efi_format()
+
+null_fc_abundance_stats <- forecast(null_fit_abundance, predictors) %>%
+  efi_statistic_format()
+
+null_fc_richness_stats <- forecast(null_fit_richness, predictors) %>%
+  efi_statistic_format()
+
+null_richness_scores <- neon4cast::score(null_fc_richness_score, "beetles")
+null_abundance_scores <- neon4cast::score(null_fc_abundance_score, "beetles")
+
+null_scores <- rbind(null_richness_scores, null_abundance_scores)
+```
+
+Forecast with precipitation as a predictor. 
+```{r}
+fc_abundance_score <- forecast(fit_abundance, predictors) %>%
+  efi_format()
+
+fc_richness_score <- forecast(fit_richness, predictors) %>%
+  efi_format()
+
+fc_abundance_stats <- forecast(fit_abundance, predictors) %>%
+  efi_statistic_format()
+
+fc_richness_stats <- forecast(fit_richness, predictors) %>%
+  efi_statistic_format()
 
 
 
+forecast <- inner_join(fc_richness_score, fc_abundance_score)
+scores <- neon4cast::score(forecast, "beetles")
+```
 
+Compare the scores for the null forecast and the regression forecast. 
+```{r}
+combined_scores <- scores %>%
+  inner_join(null_scores, by=c("siteID", "time", "target"))
 
+names(combined_scores)[names(combined_scores) == "score.x"] <- "regression_score"
+names(combined_scores)[names(combined_scores) == "score.y"] <- "null_score"
+```
 
+```{r}
+combined_scores$score_differences = combined_scores$null_score - combined_scores$regression_score
+```
 
+Null score is smaller in most cases, or minimally larger than the regression score. Therefore, using precipitation as a predictor for a regression forecast results in a worse forecast than the naive model. 
 
+# Questions
 
+1. Should the final forecast be based on individual sites?
+2. What should the format of the actual submission be?
+3. How valid is using predictors that only come from some sites?
 
 
 
