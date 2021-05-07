@@ -1,0 +1,115 @@
+---
+title: "Comparing_Forecasts"
+author: "HN"
+date: "4/14/2021"
+output: html_document
+---
+### Most of this code is just setting up the models and forecasting, the part I want to highlight is the way to compare models, which begins around line 81 (lines 8-80 just set up the models and everything, nothing particularly new there).
+```{r}
+remotes::install_github("eco4cast/neon4cast")
+library(neon4cast)  # helper utilities for forecast challenge
+library(tidyverse)  # old friends
+library(fable)      # new friends
+library(readr)
+library(forecast)
+```
+Load the targets plus predictors df
+```{r}
+setwd("~/Desktop/ESPM 288/Textbook/neon4cast-beetles-working/data_processing")
+targets <-read_csv("targets_with_humidity_temperature.csv")
+```
+Get into tsibble format
+```{r}
+##Get into tsibble format
+targets_ts <- targets %>%
+  select(siteID, time, richness, abundance, mean_humid, min_humid, max_humid, mean_tempt, min_tempt, max_tempt) %>%
+  mutate(iso_week = ISOweek::date2ISOweek(time)) %>%
+  separate(iso_week, into = c("year", "week", "day"))  %>%
+  mutate(time = ISOweek::ISOweek2date(paste(year,week, "1", sep = "-")))
+targets_tsb <- as_tsibble(targets_ts, key = siteID, index = time)
+```
+Get training data
+```{r}
+train <- targets_tsb %>%
+  filter(year < 2020) %>%
+  select(siteID, time, richness, abundance, mean_humid, min_humid, max_humid, mean_tempt, min_tempt, max_tempt, year)
+```
+Fit Linear Models (using humidity and temperature)
+```{r}
+fit_richness <- train %>% 
+  model(temp = TSLM(richness ~ mean_tempt),
+        humid = TSLM(richness ~ mean_humid),
+        temp_humid = TSLM(richness ~ mean_tempt + mean_humid))
+fit_abundnace <- train %>%
+  model(temp = TSLM(abundance ~ mean_tempt),
+        humid = TSLM(abundance ~ mean_humid),
+        temp_humid = TSLM(abundance ~ mean_tempt + mean_humid))
+```
+Forecast using predictors
+```{r}
+predictors <- targets_tsb %>%
+  filter(year > 2019)
+fc_richness <- forecast(fit_richness, predictors)
+fc_abundance <- forecast(fit_abundnace, predictors)
+```
+Score the forecasts the old way
+```{r}
+richness_score <- fc_richness %>%
+  accuracy(targets_tsb, list(crps = CRPS))
+abundance_score <- fc_abundance %>%
+  accuracy(targets_tsb, list(crps = CRPS))
+```
+Comparing to a Null Model
+```{r}
+targets <-  read_csv("https://data.ecoforecast.org/targets/beetles/beetles-targets.csv.gz")
+## Coerce to a "tsibble" time-series-data-table
+null_targets <- targets_tsb %>% filter(year < 2020)
+## Compute a simple mean/sd model per site... obviously silly given huge seasonal aspect
+fc_richness_null <- null_targets  %>% 
+  model(null = MEAN(richness))%>%
+  forecast(h = "1 year") 
+fc_abundance_null <- null_targets  %>%
+  model(null = MEAN(abundance)) %>%
+  forecast(h = "1 year") 
+
+null_scores_richness <- fc_richness_null %>% 
+   accuracy(targets_tsb, list(crps = CRPS))
+null_scores_abundance <- fc_abundance_null %>% 
+  accuracy(targets_tsb, list(crps = CRPS))
+```
+Compare Models!
+```{r}
+all_models_richness <- dplyr::bind_rows(richness_score, null_scores_richness)
+all_models_abundance <- dplyr::bind_rows(abundance_score, null_scores_abundance)
+
+all_models_richness %>%
+  ggplot() +
+  geom_boxplot(aes(x = crps, color = .model))
+
+all_models_richness %>%
+  ggplot() +
+  geom_density(aes(x = crps, color = .model))
+
+all_models_abundance %>% 
+  ggplot() +
+  geom_boxplot(aes(x = crps, color = .model))
+
+all_models_abundance %>%
+  ggplot() +
+  geom_density(aes(x = crps, color = .model))
+
+
+all_models_richness %>%
+  ggplot() +
+  geom_histogram(aes(x = crps)) +
+  facet_wrap(facets = ~.model)
+all_models_abundance %>%
+  ggplot() +
+  geom_histogram(aes(x = crps)) +
+  facet_wrap(facets = ~.model)
+```
+So based on these results, it looks like the Null Forecast is better than some but not all of the models. This comparison is based on the average CRPS score that is associated with a given model at a given site, such as richness ~ humidity at ABBY, or abundance ~ temperature a KONJ. To compare between models, I have looked at the distribution of CRPS values for each model.
+There doesn't seem to be a clear winner here, which may highlight the fact that humidity and/or temperature don't have great predictive power compared to the Null. 
+These are also very simple models, I'm mostly just imagining this as a way to set up thinking about how to compare models. 
+
+

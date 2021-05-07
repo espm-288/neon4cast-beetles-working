@@ -12,9 +12,9 @@ knitr::opts_chunk$set(echo = TRUE)
 ```{r}
 ## Get the latest beetle target data.  
 download.file("https://data.ecoforecast.org/targets/beetles/beetles-targets.csv.gz",
-              "beetles-targets.csv.gz")
+              here::here("data/beetles-targets.csv.gz"))
 
-target_ts <-  read_csv("beetles-targets.csv.gz") %>%
+target_ts <-  read_csv(here::here("data/beetles-targets.csv.gz")) %>%
   as_tsibble(key = siteID, index = time)
 ```
 
@@ -30,7 +30,7 @@ gaps <- target_ts %>%
   select(-c(.to, .from, .n))
   
 
-target_ts_fill <- target_ts %>%
+target_fill <- target_ts %>%
   group_by_key() %>%
   fill_gaps() %>% #get all the time points that should exist but don't
   as_tibble() %>%
@@ -48,11 +48,11 @@ target_ts_fill <- target_ts %>%
   select(-winter_samp) %>% 
   group_by(siteID) %>%
   #interpolate all other NA's (within the sampling period) based on values that come before and after
-  mutate(abundance_interp = na.interp(abundance),
-         richness_interp = na.interp(richness)) %>%
-  as_tsibble(key = siteID, index = time)
+  mutate(abundance = na.interp(abundance),
+         richness = na.interp(richness)) %>%
+  as_tsibble(key = siteID, index = time) %>%
+  ungroup()
 
-autoplot(target_ts_fill, abundance)
-autoplot(target_ts_fill, abundance_interp)
+usethis::use_data(target_fill)
 ```
 

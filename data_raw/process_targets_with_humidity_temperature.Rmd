@@ -1,0 +1,81 @@
+---
+title: "Untitled"
+author: "HN"
+date: "5/7/2021"
+output: html_document
+---
+
+Code that processes raw data and outputs the temperature and humidity covariates with the targets data
+
+```{r}
+
+library(tidyverse)
+library(ISOweek) 
+library(forecast)
+library(fable)
+library(tsibble)
+library(tsibbledata)
+library(lubridate)
+library(dplyr)
+library(neonstore)
+```
+Download beetle data
+```{r message=FALSE}
+## Get the latest beetle target data.  
+download.file("https://data.ecoforecast.org/targets/beetles/beetles-targets.csv.gz",
+              "beetles-targets.csv.gz")
+targets <-  read_csv("beetles-targets.csv.gz")
+```
+Download Humidity data
+```{r}
+# download all of the weather data
+neonstore::neon_download(product="DP4.00001.001")
+##Get humidity table
+humidity <- neon_read(table = "wss_daily_humid-basic", product = "DP4.00001.001")
+```
+Summarize humidity data
+  note: some weeks don't have humidity data, forcing the min/max fns to produce inf and -inf values, this produces a lot of warning messages when run
+```{r}
+mean_humidity <- humidity %>%
+  mutate(iso_week = ISOweek::date2ISOweek(date)) %>%
+  mutate(date = as.Date(date)) %>%
+  mutate(time = yearweek(date)) %>%
+  group_by(siteID, time) %>%
+  summarise(mean_humidity = mean(wssRHMean, na.rm = TRUE), min_humidity = min(wssRHMinimum, na.rm = TRUE), max_humidity = max(wssRHMaximum, na.rm = TRUE))
+```
+Download Temperature Data
+```{r}
+#neonstore::neon_download(product = )
+# Get temperature data
+temp <- neon_read(table = "wss_daily_temp", product = "DP4.00001.001")
+```
+Summarize Temp Data
+  note: this also produces a lot of Infs and -Infs
+```{r}
+temp_summary <- temp %>%
+  mutate(iso_week = ISOweek::date2ISOweek(date)) %>%
+  mutate(time = as.Date(date)) %>%
+  mutate(time = yearweek(date)) %>%
+  group_by(siteID, time) %>%
+  summarise(mean_temp = mean(wssTempTripleMean, na.rm = TRUE), min_temp = min(wssTempTripleMinimum, na.rm = TRUE), max_temp = max(wssTempTripleMaximum, na.rm = TRUE))
+```
+Now add them to targets
+```{r}
+targets_all <- left_join(targets, mean_humidity, by = c("time", "siteID")) %>% left_join(temp_summary, by = c("time", "siteID"))
+```
+Clean out the infs, -infs, and NaNs
+```{r}
+targets_predictors <- targets_all %>%
+  mutate("mean_humid" = ifelse(is.nan(mean_humidity), NA, mean_humidity)) %>%
+  mutate("min_humid" = ifelse(is.infinite(min_humidity), NA, min_humidity)) %>%
+  mutate("max_humid" = ifelse(is.infinite(max_humidity), NA, max_humidity)) %>%
+  mutate("mean_tempt" = ifelse(is.nan(mean_temp), NA, mean_temp)) %>%
+  mutate("min_tempt" = ifelse(is.infinite(min_temp), NA, min_temp)) %>%
+  mutate("max_tempt" = ifelse(is.infinite(max_temp), NA, max_temp)) %>%
+  select(-c("min_humidity", "max_humidity", "min_temp", "max_temp", "mean_humidity", "mean_temp"))
+```
+Write to csv
+```{r}
+write.csv(targets_predictors, "targets_with_humidity_temperature.csv")
+```
+
